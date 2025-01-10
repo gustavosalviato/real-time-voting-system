@@ -71,8 +71,6 @@ app.get("/polls/:pollId", async (request, reply) => {
       });
     }
 
-    console.log(result);
-
     const poll = {
       id: result[0].poll_id,
       title: result[0].poll_title,
@@ -105,18 +103,44 @@ app.post("/polls/:pollId/votes", async (request, reply) => {
 
   let { sessionId } = request.cookies;
 
-  if (!sessionId) {
-    sessionId = randomUUID();
+  try {
+    if (sessionId) {
+      const [sessionValue] = sessionId.split(".");
 
-    reply.setCookie("sessionId", sessionId, {
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-      signed: true,
-      httpOnly: true,
-    });
+      const userPreviousVotedOnPoll =
+        await sql`SELECT v.id, v.poll_id, v.session_id, v.poll_option_id FROM vote AS v WHERE v.poll_id = ${pollId} AND v.session_id = ${sessionValue}`;
 
-    await sql`INSERT INTO vote (id, session_id, poll_id, poll_option_id, created_at) VALUES (${randomUUID()}, ${sessionId}, ${pollId}, ${pollOptionId}, NOW())`;
+      if (
+        userPreviousVotedOnPoll.length > 0 &&
+        userPreviousVotedOnPoll[0].poll_option_id !== pollOptionId
+      ) {
+        const voteId = userPreviousVotedOnPoll[0].id;
 
-    return reply.status(201).send();
+        await sql`DELETE from vote WHERE vote.id = ${voteId}`;
+
+        await sql`INSERT INTO vote (id, session_id, poll_id, poll_option_id, created_at) VALUES (${randomUUID()}, ${sessionValue}, ${pollId}, ${pollOptionId}, NOW())`;
+      } else if (userPreviousVotedOnPoll) {
+        return reply
+          .status(400)
+          .send({ message: "You have already voted on this poll." });
+      }
+    }
+
+    if (!sessionId) {
+      sessionId = randomUUID();
+
+      reply.setCookie("sessionId", sessionId, {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 30, // 30 days
+        signed: true,
+        httpOnly: true,
+      });
+
+      await sql`INSERT INTO vote (id, session_id, poll_id, poll_option_id, created_at) VALUES (${randomUUID()}, ${sessionId}, ${pollId}, ${pollOptionId}, NOW())`;
+
+      return reply.status(201).send();
+    }
+  } catch (error) {
+    console.log(error);
   }
 });
