@@ -3,9 +3,13 @@ import { randomUUID } from "node:crypto";
 import { sql } from "./lib/postgres";
 
 import fastify from "fastify";
+
 import cookie from "@fastify/cookie";
+import websocket from "@fastify/websocket";
 
 import { z } from "zod";
+import { pollResults } from "./http/ws/poll-results";
+import { voting } from "./core/voting-pub-sub";
 
 const app = fastify();
 
@@ -13,6 +17,10 @@ app.register(cookie, {
   secret: "real-time-voting-system",
   hook: "onRequest",
 });
+
+app.register(websocket);
+
+app.register(pollResults);
 
 app
   .listen({
@@ -137,6 +145,14 @@ app.post("/polls/:pollId/votes", async (request, reply) => {
       });
 
       await sql`INSERT INTO vote (id, session_id, poll_id, poll_option_id, created_at) VALUES (${randomUUID()}, ${sessionId}, ${pollId}, ${pollOptionId}, NOW())`;
+
+      const pollResult =
+        await sql`SELECT po.title, COUNT(v.id) AS vote_count FROM poll_options AS po LEFT JOIN vote AS v ON v.poll_option_id = po.id where po.poll_id = ${pollId} GROUP BY po.title`;
+
+      voting.publish(pollId, {
+        pollOptionId,
+        votes: 10,
+      });
 
       return reply.status(201).send();
     }
